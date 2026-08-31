@@ -4,6 +4,8 @@ const { Connection } = require("@solana/web3.js");
 const app = express();
 app.use(express.json());
 const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const USDC_MINT_SOL = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const STATIC_RATES = {
   DZD:0.0074,NGN:0.00063,KES:0.0078,MAD:0.1,EGP:0.021,GHS:0.062,XOF:0.0017,ETB:0.0091,
   UGX:0.00027,TZS:0.00038,RWF:0.00073,MZN:0.016,ZMW:0.044,MWK:0.00058,BIF:0.00034,
@@ -16,6 +18,38 @@ const STATIC_RATES = {
   AUD:0.716,CAD:0.720,NZD:0.592,SEK:0.104,
   NOK:0.107,DKK:0.155,SGD:0.786,HKD:0.128,
 };
+async function verifyPayment(txSignature) {
+  try {
+    const tx = await connection.getParsedTransaction(txSignature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0
+    });
+    if (!tx || tx.meta?.err) return false;
+    const wallet = process.env.SOLANA_USDC_WALLET;
+    const allIx = [
+      ...tx.transaction.message.instructions,
+      ...(tx.meta?.innerInstructions?.flatMap(i => i.instructions) || [])
+    ];
+    for (const ix of allIx) {
+      if ("parsed" in ix) {
+        const { type, info } = ix.parsed;
+        if ((type === "transfer" || type === "transferChecked") && info.destination === wallet) {
+          const amount = info.tokenAmount?.uiAmount ?? (info.amount / 1e6);
+          if (amount >= 0.10) return true;
+        }
+      }
+    }
+    return false;
+  } catch { return false; }
+}
+async function getJupiterPrice(inputMint, outputMint, amount) {
+  try {
+    const url = "https://quote-api.jup.ag/v6/quote?inputMint="+inputMint+"&outputMint="+outputMint+"&amount="+amount+"&slippageBps=50";
+    const res = await fetch(url);
+    const data = await res.json();
+    return data?.outAmount ? parseInt(data.outAmount) / amount : null;
+  } catch { return null; }
+}
 async function getLiveRates() {
   try {
     const [ecbRes,cgRes] = await Promise.all([
@@ -36,12 +70,18 @@ async function getLiveRates() {
   } catch { return {...STATIC_RATES,USD:1,USDC:1}; }
 }
 app.get("/api/health",async(req,res)=>{
-  const slot=await connection.getSlot();
-  res.json({status:"ok",service:"Bercy Solana Pay",network:"Solana Mainnet",protocols:["x402","AC2","Jupiter"],slot,totalCorridors:95,timestamp:new Date().toISOString()});
+  try {
+    const slot=await connection.getSlot();
+    res.json({status:"ok",service:"Bercy Solana Pay",network:"Solana Mainnet",protocols:["x402","AC2","Jupiter"],wallet:process.env.SOLANA_USDC_WALLET,slot,totalCorridors:95,timestamp:new Date().toISOString()});
+  } catch { res.json({status:"ok",service:"Bercy Solana Pay",network:"Solana Mainnet",protocols:["x402","AC2","Jupiter"],totalCorridors:95}); }
 });
 app.get("/api/rates",async(req,res)=>{
   const rates=await getLiveRates();
   res.json({service:"Bercy Solana Pay",network:"Solana Mainnet",sources:{fiat:"Frankfurter (ECB)",crypto:"CoinGecko (live)",solana:"Jupiter (live)",africa:"Bercy Static"},totalCorridors:Object.keys(rates).length,lastUpdated:new Date().toISOString().split("T")[0],rates});
+});
+app.get("/api/jupiter",async(req,res)=>{
+  const solPrice=await getJupiterPrice(SOL_MINT,USDC_MINT_SOL,1000000000);
+  res.json({service:"Bercy Jupiter",network:"Solana Mainnet",SOL_USDC:solPrice,source:"Jupiter v6 API",timestamp:new Date().toISOString()});
 });
 app.post("/api/authorize",async(req,res)=>{
   const{from,to,amount,agent_did}=req.body;
@@ -51,7 +91,23 @@ app.post("/api/authorize",async(req,res)=>{
 });
 app.post("/api/orchestrate",async(req,res)=>{
   const payment=req.headers["x-payment"];
-  if(!payment) return res.status(402).json({error:"x402 Payment Required",amount:"0.10",currency:"USDC",network:"Solana Mainnet",chain_id:"solana",usdc_mint:process.env.USDC_MINT,message:"Send $0.10 USDC on Solana with X-PAYMENT header"});
+  if(!payment) return res.status(402).json({
+    error:"x402 Payment Required",
+    amount:"0.10",
+    currency:"USDC",
+    network:"Solana Mainnet",
+    chain_id:"solana",
+    usdc_mint:process.env.USDC_MINT,
+    pay_to:process.env.SOLANA_USDC_WALLET,
+    message:"Send $0.10 USDC on Solana to bercy wallet, include tx signature as X-PAYMENT header"
+  });
+  const verified=await verifyPayment(payment);
+  if(!verified) return res.status(402).json({
+    error:"Payment not verified on-chain",
+    message:"TX not found or amount < $0.10 USDC",
+    tx_checked:payment,
+    pay_to:process.env.SOLANA_USDC_WALLET
+  });
   const{from,to,amount}=req.body;
   if(!from||!to||!amount) return res.status(400).json({error:"from, to, amount required"});
   const rates=await getLiveRates();
@@ -60,7 +116,7 @@ app.post("/api/orchestrate",async(req,res)=>{
   const effectiveRate=toRate/fromRate;
   const estimatedOutput=Math.round(amount*effectiveRate*10000)/10000;
   const tag="solana_"+Date.now().toString(36);
-  res.json({success:true,from:from.toUpperCase(),to:to.toUpperCase(),amount,effective_rate:Math.round(effectiveRate*10000)/10000,estimated_output:estimatedOutput,path:from.toUpperCase()+" -> USDC -> "+to.toUpperCase(),chain:"Solana Mainnet",protocols:["x402","AC2"],settlement_time:"~1 second",cost:"$0.10 USDC",attribution_tag:tag,timestamp:new Date().toISOString()});
+  res.json({success:true,from:from.toUpperCase(),to:to.toUpperCase(),amount,effective_rate:Math.round(effectiveRate*10000)/10000,estimated_output:estimatedOutput,path:from.toUpperCase()+" -> USDC -> "+to.toUpperCase(),chain:"Solana Mainnet",protocols:["x402","AC2","Jupiter"],settlement_time:"~1 second",cost:"$0.10 USDC",pay_to:process.env.SOLANA_USDC_WALLET,attribution_tag:tag,timestamp:new Date().toISOString()});
 });
 const PORT=process.env.PORT||3002;
 app.listen(PORT,()=>console.log("Bercy Solana Pay running on port "+PORT));
