@@ -73,36 +73,45 @@ async function getLiveRates() {
   } catch { return {...STATIC_RATES,USD:1,USDC:1}; }
 }
 
-// LANDING PAGE
+// LANDING PAGE — centered, clickable GET links
 app.get('/', (req, res) => {
+  const base = req.protocol + '://' + req.get('host');
   res.send(`<!DOCTYPE html>
 <html><head><title>Bercy Solana Pay</title>
-<style>body{background:#0a0a0a;color:#9945FF;font-family:monospace;padding:40px;max-width:700px}
-h1{color:#14F195}a{color:#9945FF}hr{border-color:#222;margin:20px 0}
-.badge{border:1px solid #9945FF;padding:4px 10px;margin:4px;display:inline-block;border-radius:4px;font-size:13px}
-.ep{background:#111;padding:10px;margin:6px 0;border-radius:4px}
-</style></head><body>
+<style>
+  *{box-sizing:border-box}
+  body{background:#0a0a0a;color:#9945FF;font-family:monospace;margin:0;padding:40px 20px;display:flex;justify-content:center}
+  .wrap{max-width:700px;width:100%}
+  h1{color:#14F195;margin-top:0}
+  a{color:#9945FF}
+  hr{border:none;border-top:1px solid #222;margin:20px 0}
+  .badge{border:1px solid #9945FF;padding:4px 10px;margin:4px;display:inline-block;border-radius:4px;font-size:13px}
+  .ep{background:#111;padding:10px 14px;margin:6px 0;border-radius:4px;display:block;text-decoration:none;color:#9945FF}
+  .ep:hover{background:#1a1a1a}
+  .ep a{color:#14F195;text-decoration:none}
+</style>
+</head><body><div class="wrap">
 <h1>⚡ Bercy Solana Pay</h1>
 <p>World's first <b>x402 + AC2 + Jupiter</b> cross-border payment layer on Solana Mainnet.</p>
 <div>
-<span class="badge">⚡ x402 on Solana</span>
-<span class="badge">🔒 AC2 Approval</span>
-<span class="badge">🌍 95 Corridors</span>
-<span class="badge">💰 $0.10 / route</span>
-<span class="badge">⏱ ~1 second</span>
-<span class="badge">🪐 Jupiter DEX</span>
+  <span class="badge">⚡ x402 on Solana</span>
+  <span class="badge">🔒 AC2 Approval</span>
+  <span class="badge">🌍 95 Corridors</span>
+  <span class="badge">💰 $0.10 / route</span>
+  <span class="badge">⏱ ~1 second</span>
+  <span class="badge">🪐 Jupiter DEX</span>
 </div>
 <hr>
 <h3>API ENDPOINTS</h3>
-<div class="ep">🟢 GET /api/health — Service status</div>
-<div class="ep">🟢 GET /api/rates — Live FX + Crypto rates (free)</div>
-<div class="ep">🪐 GET /api/jupiter — Live SOL/USDC Jupiter price</div>
+<div class="ep">🟢 <a href="${base}/api/health">GET /api/health</a> — Service status</div>
+<div class="ep">🟢 <a href="${base}/api/rates">GET /api/rates</a> — Live FX + Crypto rates (free)</div>
+<div class="ep">🪐 <a href="${base}/api/jupiter">GET /api/jupiter</a> — Live SOL/USDC Jupiter price</div>
 <div class="ep">🔒 POST /api/authorize — AC2 human approval</div>
 <div class="ep">💳 POST /api/orchestrate — x402 payment routing ($0.10 USDC)</div>
 <hr>
 <p>🟣 Solana Mainnet | x402 + AC2 + Jupiter<br>
 <a href="https://github.com/soheibabdou">GitHub</a> | <a href="https://linkedin.com/in/soheib-abdou-40585342b">LinkedIn</a></p>
-</body></html>`);
+</div></body></html>`);
 });
 
 // HEALTH — wallet hidden
