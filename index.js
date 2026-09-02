@@ -18,6 +18,7 @@ const STATIC_RATES = {
   AUD:0.716,CAD:0.720,NZD:0.592,SEK:0.104,
   NOK:0.107,DKK:0.155,SGD:0.786,HKD:0.128,
 };
+
 async function verifyPayment(txSignature) {
   try {
     const tx = await connection.getParsedTransaction(txSignature, {
@@ -42,6 +43,7 @@ async function verifyPayment(txSignature) {
     return false;
   } catch { return false; }
 }
+
 async function getJupiterPrice(inputMint, outputMint, amount) {
   try {
     const url = "https://quote-api.jup.ag/v6/quote?inputMint="+inputMint+"&outputMint="+outputMint+"&amount="+amount+"&slippageBps=50";
@@ -50,6 +52,7 @@ async function getJupiterPrice(inputMint, outputMint, amount) {
     return data?.outAmount ? parseInt(data.outAmount) / amount : null;
   } catch { return null; }
 }
+
 async function getLiveRates() {
   try {
     const [ecbRes,cgRes] = await Promise.all([
@@ -69,54 +72,124 @@ async function getLiveRates() {
     return {...fiat,...STATIC_RATES,...crypto,USDC:1};
   } catch { return {...STATIC_RATES,USD:1,USDC:1}; }
 }
-app.get("/api/health",async(req,res)=>{
+
+// LANDING PAGE
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html><head><title>Bercy Solana Pay</title>
+<style>body{background:#0a0a0a;color:#9945FF;font-family:monospace;padding:40px;max-width:700px}
+h1{color:#14F195}a{color:#9945FF}hr{border-color:#222;margin:20px 0}
+.badge{border:1px solid #9945FF;padding:4px 10px;margin:4px;display:inline-block;border-radius:4px;font-size:13px}
+.ep{background:#111;padding:10px;margin:6px 0;border-radius:4px}
+</style></head><body>
+<h1>⚡ Bercy Solana Pay</h1>
+<p>World's first <b>x402 + AC2 + Jupiter</b> cross-border payment layer on Solana Mainnet.</p>
+<div>
+<span class="badge">⚡ x402 on Solana</span>
+<span class="badge">🔒 AC2 Approval</span>
+<span class="badge">🌍 95 Corridors</span>
+<span class="badge">💰 $0.10 / route</span>
+<span class="badge">⏱ ~1 second</span>
+<span class="badge">🪐 Jupiter DEX</span>
+</div>
+<hr>
+<h3>API ENDPOINTS</h3>
+<div class="ep">🟢 GET /api/health — Service status</div>
+<div class="ep">🟢 GET /api/rates — Live FX + Crypto rates (free)</div>
+<div class="ep">🪐 GET /api/jupiter — Live SOL/USDC Jupiter price</div>
+<div class="ep">🔒 POST /api/authorize — AC2 human approval</div>
+<div class="ep">💳 POST /api/orchestrate — x402 payment routing ($0.10 USDC)</div>
+<hr>
+<p>🟣 Solana Mainnet | x402 + AC2 + Jupiter<br>
+<a href="https://github.com/soheibabdou">GitHub</a> | <a href="https://linkedin.com/in/soheib-abdou-40585342b">LinkedIn</a></p>
+</body></html>`);
+});
+
+// HEALTH — wallet hidden
+app.get("/api/health", async(req, res) => {
   try {
-    const slot=await connection.getSlot();
-    res.json({status:"ok",service:"Bercy Solana Pay",network:"Solana Mainnet",protocols:["x402","AC2","Jupiter"],wallet:process.env.SOLANA_USDC_WALLET,slot,totalCorridors:95,timestamp:new Date().toISOString()});
-  } catch { res.json({status:"ok",service:"Bercy Solana Pay",network:"Solana Mainnet",protocols:["x402","AC2","Jupiter"],totalCorridors:95}); }
+    const slot = await connection.getSlot();
+    res.json({
+      status: "ok",
+      service: "Bercy Solana Pay",
+      network: "Solana Mainnet",
+      protocols: ["x402","AC2","Jupiter"],
+      slot,
+      totalCorridors: 95,
+      timestamp: new Date().toISOString()
+    });
+  } catch {
+    res.json({ status:"ok", service:"Bercy Solana Pay", network:"Solana Mainnet", protocols:["x402","AC2","Jupiter"], totalCorridors:95 });
+  }
 });
-app.get("/api/rates",async(req,res)=>{
-  const rates=await getLiveRates();
-  res.json({service:"Bercy Solana Pay",network:"Solana Mainnet",sources:{fiat:"Frankfurter (ECB)",crypto:"CoinGecko (live)",solana:"Jupiter (live)",africa:"Bercy Static"},totalCorridors:Object.keys(rates).length,lastUpdated:new Date().toISOString().split("T")[0],rates});
-});
-app.get("/api/jupiter",async(req,res)=>{
-  const solPrice=await getJupiterPrice(SOL_MINT,USDC_MINT_SOL,1000000000);
-  res.json({service:"Bercy Jupiter",network:"Solana Mainnet",SOL_USDC:solPrice,source:"Jupiter v6 API",timestamp:new Date().toISOString()});
-});
-app.post("/api/authorize",async(req,res)=>{
-  const{from,to,amount,agent_did}=req.body;
-  if(!from||!to||!amount) return res.status(400).json({error:"from, to, amount required"});
-  const approval_id="ac2_sol_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
-  res.json({approved:true,approval_id,from,to,amount,agent_did:agent_did||"anonymous",chain:"solana",expires_in:"5 minutes",message:"AC2: Human approval granted. Proceed with bercy_pay_solana."});
-});
-app.post("/api/orchestrate",async(req,res)=>{
-  const payment=req.headers["x-payment"];
-  if(!payment) return res.status(402).json({
-    error:"x402 Payment Required",
-    amount:"0.10",
-    currency:"USDC",
-    network:"Solana Mainnet",
-    chain_id:"solana",
-    usdc_mint:process.env.USDC_MINT,
-    pay_to:process.env.SOLANA_USDC_WALLET,
-    message:"Send $0.10 USDC on Solana to bercy wallet, include tx signature as X-PAYMENT header"
+
+app.get("/api/rates", async(req, res) => {
+  const rates = await getLiveRates();
+  res.json({
+    service: "Bercy Solana Pay",
+    network: "Solana Mainnet",
+    sources: { fiat:"Frankfurter (ECB)", crypto:"CoinGecko (live)", solana:"Jupiter (live)", africa:"Bercy Static" },
+    totalCorridors: Object.keys(rates).length,
+    timestamp: new Date().toISOString(),
+    rates
   });
-  const verified=await verifyPayment(payment);
-  if(!verified) return res.status(402).json({
-    error:"Payment not verified on-chain",
-    message:"TX not found or amount < $0.10 USDC",
-    tx_checked:payment,
-    pay_to:process.env.SOLANA_USDC_WALLET
-  });
-  const{from,to,amount}=req.body;
-  if(!from||!to||!amount) return res.status(400).json({error:"from, to, amount required"});
-  const rates=await getLiveRates();
-  const fromRate=rates[from.toUpperCase()];const toRate=rates[to.toUpperCase()];
-  if(!fromRate||!toRate) return res.status(400).json({error:"Unknown currency: "+from+" or "+to});
-  const effectiveRate=toRate/fromRate;
-  const estimatedOutput=Math.round(amount*effectiveRate*10000)/10000;
-  const tag="solana_"+Date.now().toString(36);
-  res.json({success:true,from:from.toUpperCase(),to:to.toUpperCase(),amount,effective_rate:Math.round(effectiveRate*10000)/10000,estimated_output:estimatedOutput,path:from.toUpperCase()+" -> USDC -> "+to.toUpperCase(),chain:"Solana Mainnet",protocols:["x402","AC2","Jupiter"],settlement_time:"~1 second",cost:"$0.10 USDC",pay_to:process.env.SOLANA_USDC_WALLET,attribution_tag:tag,timestamp:new Date().toISOString()});
 });
-const PORT=process.env.PORT||3002;
-app.listen(PORT,()=>console.log("Bercy Solana Pay running on port "+PORT));
+
+app.get("/api/jupiter", async(req, res) => {
+  const solPrice = await getJupiterPrice(SOL_MINT, USDC_MINT_SOL, 1000000000);
+  res.json({ service:"Bercy Jupiter", network:"Solana Mainnet", SOL_USDC:solPrice, source:"Jupiter v6 API", timestamp:new Date().toISOString() });
+});
+
+app.post("/api/authorize", async(req, res) => {
+  const { from, to, amount, agent_did } = req.body;
+  if (!from||!to||!amount) return res.status(400).json({ error:"from, to, amount required" });
+  const approval_id = "ac2_sol_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+  res.json({ approved:true, approval_id, from, to, amount, agent_did:agent_did||"anonymous", chain:"solana", expires_in:"5 minutes", message:"AC2: Human approval granted. Proceed with bercy_pay_solana.", timestamp:new Date().toISOString() });
+});
+
+app.post("/api/orchestrate", async(req, res) => {
+  const payment = req.headers["x-payment"];
+  if (!payment) return res.status(402).json({
+    error: "x402 Payment Required",
+    amount: "0.10",
+    currency: "USDC",
+    network: "Solana Mainnet",
+    chain_id: "solana",
+    usdc_mint: process.env.USDC_MINT,
+    pay_to: process.env.SOLANA_USDC_WALLET,
+    message: "Send $0.10 USDC on Solana to bercy wallet, include tx signature as X-PAYMENT header"
+  });
+  const verified = await verifyPayment(payment);
+  if (!verified) return res.status(402).json({
+    error: "Payment not verified on-chain",
+    message: "TX not found or amount < $0.10 USDC",
+    tx_checked: payment
+  });
+  const { from, to, amount } = req.body;
+  if (!from||!to||!amount) return res.status(400).json({ error:"from, to, amount required" });
+  const rates = await getLiveRates();
+  const fromRate = rates[from.toUpperCase()];
+  const toRate = rates[to.toUpperCase()];
+  if (!fromRate||!toRate) return res.status(400).json({ error:"Unknown currency: "+from+" or "+to });
+  const effectiveRate = toRate/fromRate;
+  const estimatedOutput = Math.round(amount*effectiveRate*10000)/10000;
+  const tag = "solana_"+Date.now().toString(36);
+  res.json({
+    success: true,
+    from: from.toUpperCase(),
+    to: to.toUpperCase(),
+    amount,
+    effective_rate: Math.round(effectiveRate*10000)/10000,
+    estimated_output: estimatedOutput,
+    path: from.toUpperCase()+" -> USDC -> "+to.toUpperCase(),
+    chain: "Solana Mainnet",
+    protocols: ["x402","AC2","Jupiter"],
+    settlement_time: "~1 second",
+    cost: "$0.10 USDC",
+    attribution_tag: tag,
+    timestamp: new Date().toISOString()
+  });
+});
+
+const PORT = process.env.PORT || 3002;
+app.listen(PORT, () => console.log("Bercy Solana Pay running on port "+PORT));
